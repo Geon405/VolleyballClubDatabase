@@ -34,10 +34,10 @@ It features a **relational database schema**, advanced **SQL queries**, **trigge
 
 ## 🧰 Tech Stack
 
-- **Database**: [MySQL / PostgreSQL / SQLite — choose your actual DBMS]  
+- **Database**: MySQL
 - **Backend**: SQL, Triggers, Views  
-- **Frontend/GUI**: [Java (Swing), Python (Tkinter/Flask), or Web stack]  
-- **Tools**: [VS Code / MySQL Workbench / pgAdmin — list what you used]
+- **Frontend/GUI**: HTML/CSS, HTMX, PHP
+- **Tools**: VS Code
 
 ---
 
