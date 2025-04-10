@@ -130,7 +130,9 @@ switch ($query) {
         }
         break;
 
+    // SQL script #7
     case '(vii) location_details':
+        $search = ($search === "*" || $search === "") ? "" : "%{$search}%";
 
         $sql = "SELECT
                     L.location_id,
@@ -160,137 +162,221 @@ switch ($query) {
                     FROM OperatesAt
                     WHERE end_date IS NULL
                     GROUP BY location_id
-                ) AS PersonnelSum ON PersonnelSum.location_id = L.location_id
-                ORDER BY PC.province ASC, PC.city ASC";
+                ) AS PersonnelSum ON PersonnelSum.location_id = L.location_id";
 
-        $result = $conn->query($sql);
+        if (!empty($search)) {
+            $sql .= " WHERE
+                        CAST(L.location_id AS CHAR) LIKE ?
+                        OR L.name LIKE ?
+                        OR L.address LIKE ?
+                        OR PC.city LIKE ?
+                        OR PC.province LIKE ?
+                        OR L.postal_code LIKE ?
+                        OR L.phone_number LIKE ?
+                        OR L.web_address LIKE ?
+                        OR L.type LIKE ?";
+        }
+
+        $sql .= " ORDER BY PC.province ASC, PC.city ASC";
+
+        $stmt = $conn->prepare($sql);
+
+        if (!empty($search)) {
+            $stmt->bind_param("sssssssss", $search, $search, $search, $search, $search, $search, $search, $search, $search);
+        }
+
+        $stmt->execute();
+        $result = $stmt->get_result();
         break;
 
-
-
+    // SQL script #8
     case '(viii) family_members_report':
         $search = ($search === "*") ? "%" : "%{$search}%";
+
         $sql = "SELECT
-                    L.name AS LocationName,
-                    P1.first_name AS FamilyFirstName,
-                    P1.last_name AS FamilyLastName,
-                    SFM.first_name AS SecondaryFirstName,
-                    SFM.last_name AS SecondaryLastName,
-                    SFM.phone_number AS SecondaryPhone,
-                    CMF.relationship_type AS Relationship,
-                    CM.club_member_id AS ClubMemberID,
-                    P2.first_name AS ClubMemberFirstName,
-                    P2.last_name AS ClubMemberLastName,
-                    P2.birth_date AS DOB,
-                    P2.sin AS SIN,
-                    P2.medicare_card_number AS Medicare,
-                    P2.telephone_number AS Phone,
-                    P2.address AS Address,
-                    PC.city,
-                    PC.province,
-                    P2.postal_code AS PostalCode
-                FROM FamilyMember FM
-                JOIN Person P1 ON FM.sin = P1.sin
-                LEFT JOIN SecondaryFamilyMember SFM ON FM.secondary_family_member_id = SFM.secondary_family_member_id
-                JOIN ClubMemberFamily CMF ON FM.family_member_id = CMF.family_member_id
-                JOIN ClubMember CM ON CMF.club_member_id = CM.club_member_id
-                JOIN Person P2 ON CM.sin = P2.sin
-                LEFT JOIN Location L ON CM.current_location_id = L.location_id
-                LEFT JOIN PostalCode PC ON P2.postal_code = PC.postal_code
-                WHERE P1.first_name LIKE ? OR P1.last_name LIKE ?
-                ORDER BY P1.last_name, P2.last_name;";
+            -- Secondary family member details
+            SFM.first_name AS SecondaryFirstName,
+            SFM.last_name AS SecondaryLastName,
+            SFM.phone_number AS SecondaryPhone,
+
+            -- Location of the club member
+            L.location_id,
+            L.name AS LocationName,
+
+            -- Primary family member details
+            P1.first_name AS FamilyFirstName,
+            P1.last_name AS FamilyLastName,
+
+            -- Relationship and club member details
+            CMF.relationship_type AS Relationship,
+            CM.club_member_id AS ClubMemberID,
+
+            -- Club member personal info
+            P2.first_name AS ClubMemberFirstName,
+            P2.last_name AS ClubMemberLastName,
+            P2.birth_date AS DOB,
+            P2.sin AS SIN,
+            P2.medicare_card_number AS Medicare,
+            P2.telephone_number AS Phone,
+            P2.address AS Address,
+
+            -- Postal info
+            PC.city,
+            PC.province,
+            P2.postal_code AS PostalCode
+
+        FROM FamilyMember FM
+
+        -- Join primary family member info
+        JOIN Person P1 ON FM.sin = P1.sin
+
+        -- Join optional secondary family member info
+        LEFT JOIN SecondaryFamilyMember SFM
+            ON FM.secondary_family_member_id = SFM.secondary_family_member_id
+
+        -- Get related club member(s)
+        JOIN ClubMemberFamily CMF ON FM.family_member_id = CMF.family_member_id
+        JOIN ClubMember CM ON CMF.club_member_id = CM.club_member_id
+
+        -- Club member's person info
+        JOIN Person P2 ON CM.sin = P2.sin
+
+        -- Club member’s current location and city/province
+        LEFT JOIN Location L ON CM.current_location_id = L.location_id
+        LEFT JOIN PostalCode PC ON P2.postal_code = PC.postal_code
+
+        -- Name filter (search on primary family member)
+        WHERE P1.first_name LIKE ? OR P1.last_name LIKE ? OR SFM.first_name LIKE ? OR SFM.last_name LIKE ?
+
+        -- Neatly sorted
+        ORDER BY P1.last_name, P2.last_name;
+        ";
 
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ss", $search, $search);
+        $stmt->bind_param("ssss", $search, $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        break;
+
+    // SQL script #9
+    case '(ix) weekly_team_formations_for_location':
+        $locationName = isset($_GET['location']) ? $_GET['location'] : '';
+        $start_date = isset($_GET['start-date']) ? $_GET['start-date'] : null;
+        $end_date = isset($_GET['end-date']) ? $_GET['end-date'] : null;
+
+        $sql = "SELECT
+            HC.first_name AS CoachFirstName,
+            HC.last_name AS CoachLastName,
+            S.date AS SessionDate,
+            S.start_time,
+            S.type AS SessionType,
+            L.address AS SessionAddress,
+            T.name AS TeamName,
+            CASE
+                WHEN S.date > CURDATE() THEN NULL
+                ELSE S.score_team1
+            END AS ScoreTeam1,
+            CASE
+                WHEN S.date > CURDATE() THEN NULL
+                ELSE S.score_team2
+            END AS ScoreTeam2,
+            P.first_name AS PlayerFirstName,
+            P.last_name AS PlayerLastName,
+            TM.role AS PlayerRole
+        FROM Session S
+        JOIN Location L ON S.location_id = L.location_id
+        JOIN Team T ON (T.team_id = S.team1_id OR T.team_id = S.team2_id)
+        JOIN TeamMember TM ON TM.team_id = T.team_id
+        JOIN ClubMember CM ON TM.club_member_id = CM.club_member_id
+        JOIN Person P ON CM.sin = P.sin
+        LEFT JOIN ClubMember Captain ON T.captain_id = Captain.club_member_id
+        LEFT JOIN Person HC ON Captain.sin = HC.sin
+        WHERE L.name LIKE ?
+        AND S.date BETWEEN ? AND ?
+        ORDER BY S.date ASC, S.start_time ASC;";
+
+        $stmt = $conn->prepare($sql);
+        $likeLoc = "%$locationName%";
+        $stmt->bind_param("sss", $likeLoc, $start_date, $end_date);
         $stmt->execute();
         $result = $stmt->get_result();
         break;
 
 
-    case '(ix) team_rosters':
-        $search = ($search === "*") ? "%" : "%{$search}%";
-        $start_date = date('Y-m-d', strtotime('monday this week')); // or from user input
-        $end_date = date('Y-m-d', strtotime('sunday this week'));
+    // SQL script #10
+    case '(x) active_members_3_locations_max_3_years':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
 
-        $sql = "SELECT
-                    L.name AS LocationName,
-                    S.date AS SessionDate,
-                    S.start_time AS StartTime,
-                    S.type AS SessionType,
-                    T.name AS TeamName,
-                    S.score_team1,
-                    S.score_team2,
-                    CONCAT(P.first_name, ' ', P.last_name) AS PlayerName,
-                    TM.role AS PlayerRole,
-                    HC.first_name AS CoachFirstName,
-                    HC.last_name AS CoachLastName
-                FROM Session S
-                JOIN Location L ON S.location_id = L.location_id
-                JOIN Team T ON T.team_id = S.team1_id OR T.team_id = S.team2_id
-                JOIN TeamMember TM ON TM.team_id = T.team_id
-                JOIN ClubMember CM ON CM.club_member_id = TM.club_member_id
-                JOIN Person P ON P.sin = CM.sin
-                LEFT JOIN ClubMember Captain ON T.captain_id = Captain.club_member_id
-                LEFT JOIN Person HC ON Captain.sin = HC.sin
-                WHERE L.name LIKE ?
-                    AND S.date BETWEEN ? AND ?
-                ORDER BY S.date ASC, S.start_time ASC;";
-
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("sss", $search, $start_date, $end_date);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        break;
-
-
-    case '(x) active_club_members_recent_and_multiple_locations':
         $sql = "SELECT
                     CM.club_member_id,
                     P.first_name,
                     P.last_name
                 FROM ClubMember CM
-                JOIN Person P ON P.sin = CM.sin
+                JOIN Person P ON CM.sin = P.sin
                 WHERE CM.status = 'Active'
-                    AND TIMESTAMPDIFF(YEAR, CM.deactivation_date IS NULL
-                                            THEN CURDATE()
-                                            ELSE CM.deactivation_date END,
-                                    (SELECT MIN(OA.start_date)
-                                        FROM OperatesAt OA
-                                        JOIN Personnel PER ON PER.personnel_id = OA.personnel_id
-                                        WHERE PER.sin = CM.sin)) <= 3
-                    AND (
-                    SELECT COUNT(DISTINCT OA.location_id)
-                    FROM OperatesAt OA
-                    JOIN Personnel PER ON OA.personnel_id = PER.personnel_id
-                    WHERE PER.sin = CM.sin
-                    ) >= 3
-                ORDER BY CM.club_member_id ASC;";
-        $result = $conn->query($sql);
+                AND CM.join_date >= CURDATE() - INTERVAL 3 YEAR
+                AND (
+                    SELECT COUNT(DISTINCT S.location_id)
+                    FROM TeamMember TM
+                    JOIN Team T ON TM.team_id = T.team_id
+                    JOIN Session S ON S.team1_id = T.team_id OR S.team2_id = T.team_id
+                    WHERE TM.club_member_id = CM.club_member_id
+                ) >= 3
+                AND (
+                    P.first_name LIKE ? OR
+                    P.last_name LIKE ? OR
+                    CM.club_member_id LIKE ?
+                )
+                ORDER BY CM.club_member_id ASC";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("sss", $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
         break;
 
 
-    case '(xi) location_formation_summary':
-        $search = explode(",", $search); // expecting "2025-01-01,2025-03-31"
-        $start_date = trim($search[0]);
-        $end_date = trim($search[1]);
+    // SQL script #11
+    case '(xi) session_summary_by_location':
+        $start_date = isset($_GET['start-date']) ? $_GET['start-date'] : null;
+        $end_date = isset($_GET['end-date']) ? $_GET['end-date'] : null;
 
         $sql = "SELECT
-                    L.name AS location_name,
-                    COUNT(CASE WHEN S.type = 'Training' THEN 1 END) AS total_training_sessions,
-                    SUM(CASE WHEN S.type = 'Training' THEN TM_count.count ELSE 0 END) AS total_training_players,
-                    COUNT(CASE WHEN S.type = 'Game' THEN 1 END) AS total_game_sessions,
-                    SUM(CASE WHEN S.type = 'Game' THEN TM_count.count ELSE 0 END) AS total_game_players
-                FROM Location L
-                JOIN Session S ON L.location_id = S.location_id
-                LEFT JOIN (
-                    SELECT team_id, COUNT(club_member_id) AS count
-                    FROM TeamMember
-                    GROUP BY team_id
-                ) AS TM_count ON TM_count.team_id IN (S.team1_id, S.team2_id)
-                WHERE S.date BETWEEN ? AND ?
-                GROUP BY L.location_id
-                HAVING total_game_sessions >= 2
-                ORDER BY total_game_sessions DESC;";
+                L.name AS location_name,
+                COUNT(CASE WHEN S.type = 'Training' THEN 1 END) AS total_training_sessions,
+                SUM(CASE WHEN S.type = 'Training' THEN (
+                    IFNULL(TM1.training_players, 0) + IFNULL(TM2.training_players, 0)
+                ) ELSE 0 END) AS total_training_players,
+                COUNT(CASE WHEN S.type = 'Game' THEN 1 END) AS total_game_sessions,
+                SUM(CASE WHEN S.type = 'Game' THEN (
+                    IFNULL(TM1.game_players, 0) + IFNULL(TM2.game_players, 0)
+                ) ELSE 0 END) AS total_game_players
+            FROM Location L
+            JOIN Session S ON L.location_id = S.location_id
+
+            -- Team 1 player counts
+            LEFT JOIN (
+                SELECT team_id,
+                    COUNT(club_member_id) AS training_players,
+                    COUNT(club_member_id) AS game_players
+                FROM TeamMember
+                GROUP BY team_id
+            ) AS TM1 ON TM1.team_id = S.team1_id
+
+            -- Team 2 player counts
+            LEFT JOIN (
+                SELECT team_id,
+                    COUNT(club_member_id) AS training_players,
+                    COUNT(club_member_id) AS game_players
+                FROM TeamMember
+                GROUP BY team_id
+            ) AS TM2 ON TM2.team_id = S.team2_id
+
+            WHERE S.date BETWEEN ? AND ?
+            GROUP BY L.location_id
+            HAVING total_game_sessions >= 2
+            ORDER BY total_game_sessions DESC
+            ;";
 
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("ss", $start_date, $end_date);
@@ -298,37 +384,17 @@ switch ($query) {
         $result = $stmt->get_result();
         break;
 
+    // SQL script #12
+    case '(xii) active_members_never_assigned_to_team':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
 
-        case '(xii) unassigned_active_members':
-            $sql = "SELECT
-                        CM.club_member_id,
-                        P.first_name,
-                        P.last_name,
-                        TIMESTAMPDIFF(YEAR, P.birth_date, CURDATE()) AS age,
-                        CM.status,
-                        P.telephone_number AS phone_number,
-                        P.email_address AS email,
-                        L.name AS location_name
-                    FROM ClubMember CM
-                    JOIN Person P ON CM.sin = P.sin
-                    JOIN Location L ON CM.current_location_id = L.location_id
-                    WHERE CM.status = 'Active'
-                      AND CM.club_member_id NOT IN (
-                          SELECT DISTINCT club_member_id
-                          FROM TeamMember
-                      )
-                    ORDER BY L.name ASC, CM.club_member_id ASC;";
-
-            $result = $conn->query($sql);
-            break;
-
-
-    case '(xiii) only_outside_hitters':
         $sql = "SELECT
                     CM.club_member_id,
                     P.first_name,
                     P.last_name,
                     TIMESTAMPDIFF(YEAR, P.birth_date, CURDATE()) AS age,
+                    CM.join_date,
+                    CM.status,
                     P.telephone_number AS phone_number,
                     P.email_address AS email,
                     L.name AS location_name
@@ -336,148 +402,248 @@ switch ($query) {
                 JOIN Person P ON CM.sin = P.sin
                 JOIN Location L ON CM.current_location_id = L.location_id
                 WHERE CM.status = 'Active'
-                    AND CM.club_member_id IN (
-                        SELECT club_member_id
+                    AND CM.club_member_id NOT IN (
+                        SELECT DISTINCT club_member_id
                         FROM TeamMember
-                        GROUP BY club_member_id
-                        HAVING SUM(role != 'Outside Hitter') = 0
                     )
-                    AND CM.club_member_id IN (
-                        SELECT club_member_id
-                        FROM TeamMember
-                        WHERE role = 'Outside Hitter'
+                    AND (
+                        P.first_name LIKE ? OR
+                        P.last_name LIKE ? OR
+                        P.email_address LIKE ? OR
+                        P.telephone_number LIKE ? OR
+                        L.name LIKE ?
                     )
-                ORDER BY L.name ASC, CM.club_member_id ASC;";
-
-        $result = $conn->query($sql);
-        break;
-
-
-    // SQL script #14
-    case '(xiv) sum_of_member_payments_and_donations_2024':
-        $sql = "SELECT
-                    SUM(CASE
-                            WHEN ClubMemberPaymentSums.payment_sum >= 100 THEN 100
-                            ELSE ClubMemberPaymentSums.payment_sum
-                        END) AS `Total Membership Fees in 2024`,
-                    SUM(CASE
-                            WHEN ClubMemberPaymentSums.payment_sum - 100 <= 0 THEN 0
-                            ELSE ClubMemberPaymentSums.payment_sum - 100
-                        END) AS `Total Donations in 2024`
-                FROM (
-                    SELECT
-                        SUM(Payments.amount) AS payment_sum,
-                        ClubMembers.club_member_id
-                    FROM Payments
-                    JOIN ClubMembers ON Payments.club_member_id = ClubMembers.club_member_id
-                    WHERE Payments.payment_year = 2024
-                    GROUP BY ClubMembers.club_member_id
-                ) AS ClubMemberPaymentSums";
-        $result = $conn->query($sql);
-        break;
-
-    // SQL script #15
-    case '(xv) team_formations_by_week':
-        $search = ($search === "*") ? "%" : "%{$search}%"; // This is used for location name
-        $sql = "SELECT
-                    T.name AS TeamName,
-                    S.date AS SessionDate,
-                    S.start_time AS StartTime,
-                    S.type AS SessionType,
-                    L.address AS SessionAddress,
-                    COALESCE(S.score_team1, '-') AS ScoreTeam1,
-                    COALESCE(S.score_team2, '-') AS ScoreTeam2,
-                    P.first_name AS CoachFirstName,
-                    P.last_name AS CoachLastName,
-                    CM.first_name AS PlayerFirstName,
-                    CM.last_name AS PlayerLastName,
-                    TM.role AS PlayerRole
-                FROM Session S
-                JOIN Location L ON S.location_id = L.location_id
-                JOIN Team T ON S.team1_id = T.team_id
-                JOIN TeamMember TM ON TM.team_id = T.team_id
-                JOIN ClubMember CM ON TM.club_member_id = CM.club_member_id
-                LEFT JOIN Personnel P ON T.captain_id = P.personnel_id
-                WHERE L.name LIKE ?
-                AND WEEK(S.date) = WEEK(CURDATE())
-                ORDER BY S.date ASC, S.start_time ASC";
+                ORDER BY L.name ASC, CM.club_member_id ASC";
 
         $stmt = $conn->prepare($sql);
+        $stmt->bind_param("sssss", $search, $search, $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        break;
+
+
+    // SQL script #13
+    case '(xiii) members_only_outside_hitter':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
+
+        $sql = "SELECT
+                    CM.club_member_id,
+                    P.first_name,
+                    P.last_name,
+                    TIMESTAMPDIFF(YEAR, P.birth_date, CURDATE()) AS age,
+                    P.telephone_number,
+                    P.email_address,
+                    L.name AS location_name
+                FROM ClubMember CM
+                JOIN Person P ON CM.sin = P.sin
+                JOIN Location L ON CM.current_location_id = L.location_id
+                WHERE CM.status = 'Active'
+                  AND CM.club_member_id IN (
+                      SELECT TM.club_member_id
+                      FROM TeamMember TM
+                      WHERE TM.role = 'Outside Hitter'
+                  )
+                  AND CM.club_member_id NOT IN (
+                      SELECT TM.club_member_id
+                      FROM TeamMember TM
+                      WHERE TM.role != 'Outside Hitter'
+                  )
+                  AND (
+                      P.first_name LIKE ? OR
+                      P.last_name LIKE ? OR
+                      P.email_address LIKE ? OR
+                      P.telephone_number LIKE ? OR
+                      L.name LIKE ?
+                  )
+                ORDER BY location_name ASC, CM.club_member_id ASC";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("sssss", $search, $search, $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        break;
+
+    // SQL script #14 - Active members with all 7 roles in game sessions
+    case '(xiv) members_played_all_roles':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
+
+        $sql = "SELECT
+                    CM.club_member_id,
+                    P.first_name,
+                    P.last_name,
+                    TIMESTAMPDIFF(YEAR, P.birth_date, CURDATE()) AS age,
+                    P.telephone_number AS phone_number,
+                    P.email_address AS email,
+                    L.name AS current_location_name
+                FROM ClubMember CM
+                JOIN Person P ON CM.sin = P.sin
+                JOIN Location L ON CM.current_location_id = L.location_id
+                WHERE CM.status = 'Active'
+                AND CM.club_member_id IN (
+                    SELECT TM.club_member_id
+                    FROM TeamMember TM
+                    JOIN Session S
+                    ON TM.team_id = S.team1_id OR TM.team_id = S.team2_id
+                    WHERE S.type = 'Game'
+                    GROUP BY TM.club_member_id
+                    HAVING
+                        SUM(TM.role = 'Outside Hitter') > 0 AND
+                        SUM(TM.role = 'Opposite') > 0 AND
+                        SUM(TM.role = 'Setter') > 0 AND
+                        SUM(TM.role = 'Middle Blocker') > 0 AND
+                        SUM(TM.role = 'Libero') > 0 AND
+                        SUM(TM.role = 'Defensive Specialist') > 0 AND
+                        SUM(TM.role = 'Serving Specialist') > 0
+                )
+                AND (
+                    P.first_name LIKE ? OR
+                    P.last_name LIKE ? OR
+                    P.email_address LIKE ? OR
+                    L.name LIKE ?
+                )
+                ORDER BY L.name ASC, CM.club_member_id ASC";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("ssss", $search, $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        break;
+
+
+    // SQL script #15
+    case '(xv) family_captains_same_location':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
+
+        $sql = "SELECT
+                    P1.first_name,
+                    P1.last_name,
+                    P1.telephone_number,
+                    L.name AS location_name
+                FROM FamilyMember FM
+                JOIN ClubMemberFamily CMF ON FM.family_member_id = CMF.family_member_id
+                JOIN ClubMember CM ON CMF.club_member_id = CM.club_member_id
+                JOIN Team T ON T.captain_id = CM.club_member_id
+                JOIN Location L ON T.location_id = L.location_id
+                JOIN Person P1 ON FM.sin = P1.sin
+                WHERE CM.status = 'Active'
+                  AND L.name LIKE ?;";
+
+        $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            die(" SQL Prepare failed: " . $conn->error);
+        }
+
         $stmt->bind_param("s", $search);
         $stmt->execute();
         $result = $stmt->get_result();
         break;
 
+
     // SQL script #16
-    case '(xvi) active_club_members_min_3_locations':
-        $sql = "SELECT
-                    CM.club_member_id,
-                    CM.first_name,
-                    CM.last_name
-                FROM ClubMember CM
-                JOIN Payments P ON CM.club_member_id = P.club_member_id
-                JOIN OperatesAt OA ON OA.personnel_id = CM.club_member_id
-                WHERE CM.status = 'Active'
-                AND TIMESTAMPDIFF(YEAR, CM.join_date, CURDATE()) <= 3
-                GROUP BY CM.club_member_id
-                HAVING COUNT(DISTINCT CM.current_location_id) >= 3
-                ORDER BY CM.club_member_id ASC";
-        $result = $conn->query($sql);
-        break;
+    case '(xvi) undefeated_members_report':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
 
-    // SQL script #17
-    case '(xvii) session_summary_by_date_range':
-        // Expecting $search to be in format: "2025-01-01,2025-03-31"
-        list($startDate, $endDate) = explode(',', $search);
-
-        $sql = "SELECT
-                    L.name AS LocationName,
-                    SUM(CASE WHEN S.type = 'Training' THEN 1 ELSE 0 END) AS TrainingSessions,
-                    SUM(CASE WHEN S.type = 'Training' THEN TM_Train.count ELSE 0 END) AS TrainingPlayers,
-                    SUM(CASE WHEN S.type = 'Game' THEN 1 ELSE 0 END) AS GameSessions,
-                    SUM(CASE WHEN S.type = 'Game' THEN TM_Game.count ELSE 0 END) AS GamePlayers
-                FROM Location L
-                JOIN Session S ON L.location_id = S.location_id
-                LEFT JOIN (
-                    SELECT team_id, COUNT(*) AS count
-                    FROM TeamMember
-                    GROUP BY team_id
-                ) AS TM_Train ON S.team1_id = TM_Train.team_id AND S.type = 'Training'
-                LEFT JOIN (
-                    SELECT team_id, COUNT(*) AS count
-                    FROM TeamMember
-                    GROUP BY team_id
-                ) AS TM_Game ON S.team1_id = TM_Game.team_id AND S.type = 'Game'
-                WHERE S.date BETWEEN ? AND ?
-                GROUP BY L.name
-                HAVING GameSessions >= 2
-                ORDER BY GameSessions DESC";
+        $sql = "SELECT DISTINCT
+                    ActiveClubMember.club_member_id,
+                    first_name,
+                    last_name,
+                    timestampdiff(YEAR, birth_date, CURDATE()) AS age,
+                    telephone_number,
+                    Location.name AS location_name
+                FROM ActiveClubMember
+                INNER JOIN ClubMemberInformation ON ActiveClubMember.club_member_id = ClubMemberInformation.club_member_id
+                INNER JOIN TeamMember ON ActiveClubMember.club_member_id = TeamMember.club_member_id
+                INNER JOIN Location ON Location.location_id = ClubMemberInformation.current_location_id
+                WHERE
+                    ClubMemberInformation.club_member_id NOT IN (SELECT club_member_id FROM LosingTeamMember)
+                    AND ClubMemberInformation.club_member_id IN (SELECT club_member_id FROM GameParticipatedTeamMember)
+                    AND (
+                        first_name LIKE ? OR
+                        last_name LIKE ? OR
+                        telephone_number LIKE ? OR
+                        Location.name LIKE ?
+                    )
+                ORDER BY Location.name, club_member_id;";
 
         $stmt = $conn->prepare($sql);
-        $stmt->bind_param("ss", $startDate, $endDate);
+        if (!$stmt) {
+            die("SQL Prepare failed: " . $conn->error);
+        }
+
+        $stmt->bind_param("ssss", $search, $search, $search, $search);
         $stmt->execute();
         $result = $stmt->get_result();
         break;
 
-    // SQL script #18
-    case '(xviii) active_members_without_team':
+
+    // SQL script #17
+    case '(xvii) treasurer_history_report':
         $sql = "SELECT
-                    CM.club_member_id,
-                    CM.first_name,
-                    CM.last_name,
-                    TIMESTAMPDIFF(YEAR, CM.birth_date, CURDATE()) AS Age,
-                    CM.join_date,
-                    CM.telephone_number,
-                    CM.email_address,
-                    L.name AS CurrentLocation
-                FROM ClubMember CM
-                JOIN Location L ON CM.current_location_id = L.location_id
-                WHERE CM.status = 'Active'
-                AND CM.club_member_id NOT IN (
-                    SELECT DISTINCT club_member_id FROM TeamMember
-                )
-                ORDER BY L.name ASC, CM.club_member_id ASC";
+    p.first_name,
+    p.last_name,
+    o.start_date,
+    COALESCE(CAST(o.end_date AS CHAR), '-') AS end_date,
+    CASE
+        WHEN o.end_date IS NULL THEN 'Current Treasurer'
+        ELSE 'Former Treasurer'
+    END AS status
+FROM
+    Person p
+JOIN
+    Personnel pl ON p.sin = pl.sin
+JOIN
+    OperatesAt o ON pl.personnel_id = o.personnel_id
+WHERE
+    o.role = 'Treasurer'
+ORDER BY
+    p.first_name ASC,
+    p.last_name ASC,
+    o.start_date ASC;";
         $result = $conn->query($sql);
+
+        // $sql = "SELECT
+        //             first_name,
+        //             last_name,
+        //             start_date,
+        //             COALESCE(end_date, '-') AS end_date
+        //         FROM personnelinformation
+        //         WHERE role = 'Treasurer'
+        //         ORDER BY first_name, last_name, start_date;";
+        // $result = $conn->query($sql);
+        break;
+
+
+
+    // SQL script #18
+    case '(xviii) members_deactivated_by_age':
+        $search = ($search === "*" || $search === "") ? "%" : "%{$search}%";
+
+        $sql = "SELECT
+                    P.first_name,
+                    P.last_name,
+                    P.telephone_number,
+                    P.email_address,
+                    CM.deactivation_date,
+                    L.name AS last_location_name,
+                    CM.last_role
+                FROM ClubMember CM
+                JOIN Person P ON CM.sin = P.sin
+                JOIN Location L ON CM.last_location_id = L.location_id
+                WHERE CM.status = 'Inactive'
+                AND TIMESTAMPDIFF(YEAR, P.birth_date, CM.deactivation_date) > 18
+                AND (
+                    P.first_name LIKE ? OR
+                    P.last_name LIKE ? OR
+                    P.email_address LIKE ? OR
+                    L.name LIKE ? OR
+                    CM.last_role LIKE ?
+                )
+                ORDER BY L.name ASC, CM.last_role ASC, P.first_name ASC, P.last_name ASC;";
+
+        $stmt = $conn->prepare($sql);
+        $stmt->bind_param("sssss", $search, $search, $search, $search, $search);
+        $stmt->execute();
+        $result = $stmt->get_result();
         break;
 
 
@@ -538,30 +704,15 @@ switch ($query) {
         break;
 
     // SQL script #21
-    case '(xxi) undefeated_club_members':
+    case '(xxi) show_email_logs':
         $sql = "SELECT
-                    CM.club_member_id,
-                    CM.first_name,
-                    CM.last_name,
-                    TIMESTAMPDIFF(YEAR, CM.birth_date, CURDATE()) AS Age,
-                    CM.telephone_number,
-                    CM.email_address,
-                    L.name AS CurrentLocation
-                FROM ClubMember CM
-                JOIN Location L ON CM.current_location_id = L.location_id
-                WHERE CM.status = 'Active'
-                AND CM.club_member_id IN (
-                    SELECT TM.club_member_id
-                    FROM TeamMember TM
-                    JOIN Session S ON TM.team_id = S.team1_id OR TM.team_id = S.team2_id
-                    WHERE S.type = 'Game'
-                    GROUP BY TM.club_member_id
-                    HAVING SUM(
-                        (TM.team_id = S.team1_id AND S.score_team1 < S.score_team2) OR
-                        (TM.team_id = S.team2_id AND S.score_team2 < S.score_team1)
-                    ) = 0
-                )
-                ORDER BY L.name ASC, CM.club_member_id ASC";
+                    email_date,
+                    sender,
+                    recipient_email,
+                    subject,
+                    mail_body,
+                    email_type
+                FROM EmailLog";
         $result = $conn->query($sql);
         break;
 
@@ -579,7 +730,7 @@ if ($result && $result->num_rows > 0) {
 
     foreach ($crud_flags as $flag => $value){
         if ($value === true){
-            echo "<th><button class=\"create-btn\" onclick=\"createRow(this, '$flag')\"><i class=\"bi bi-plus-circle\">CREATE</i></button></th>";
+            echo "<th><button data-entity='$flag' class=\"create-btn\" onclick=\"createOrEditRow(this, '$flag')\"><i class=\"bi bi-plus-circle\">CREATE</i></button></th>";
             break;
         }
     }
@@ -595,7 +746,7 @@ if ($result && $result->num_rows > 0) {
         foreach ($crud_flags as $flag => $value){
             if ($value === true){
                 echo "<td>
-                <button class=\"action-btn edit-btn\" onclick=\"editRow(this, '$flag')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+                <button class=\"action-btn edit-btn\" onclick=\"createOrEditRow(this, '$flag', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
                 <button class=\"action-btn delete-btn\" onclick=\"deleteRow(this, '$flag')\"><i class=\"bi bi-trash\">DEL</i></button>
                 </td>";
                 break;

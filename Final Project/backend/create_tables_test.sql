@@ -18,6 +18,16 @@ DROP TABLE IF EXISTS Personnel;
 DROP TABLE IF EXISTS Person;
 DROP TABLE IF EXISTS PostalCode;
 DROP TABLE IF EXISTS Location;
+DROP TABLE IF EXISTS Personnel_Locations;
+DROP TRIGGER IF EXISTS TeamMemberTimeConflictInsert;
+DROP VIEW IF EXISTS TeamMemberInformationInSession;
+DROP VIEW IF EXISTS TimeBetweenTeamMemberSession;
+DROP VIEW IF EXISTS PersonnelInformation;
+DROP VIEW IF EXISTS FamilyMemberInformation;
+DROP VIEW IF EXISTS ClubMemberInformation;
+DROP VIEW IF EXISTS ActiveClubMember;
+DROP VIEW IF EXISTS LosingTeamMember;
+DROP VIEW IF EXISTS GameParticipatedTeamMember;
 
 -- PostalCode
 CREATE TABLE PostalCode (
@@ -44,7 +54,7 @@ CREATE TABLE Person (
 CREATE TABLE Personnel (
     personnel_id INT AUTO_INCREMENT PRIMARY KEY,
     sin CHAR(9) UNIQUE,
-    FOREIGN KEY (sin) REFERENCES Person(sin)
+    FOREIGN KEY (sin) REFERENCES Person(sin) ON UPDATE CASCADE
 );
 
 -- Location
@@ -91,8 +101,8 @@ CREATE TABLE FamilyMember (
     family_member_id INT AUTO_INCREMENT PRIMARY KEY,
     sin CHAR(9) UNIQUE,
     secondary_family_member_id INT,
-    FOREIGN KEY (sin) REFERENCES Person(sin),
-    FOREIGN KEY (secondary_family_member_id) REFERENCES SecondaryFamilyMember(secondary_family_member_id) ON DELETE SET NULL
+    FOREIGN KEY (sin) REFERENCES Person(sin) ON UPDATE CASCADE,
+    FOREIGN KEY (secondary_family_member_id) REFERENCES SecondaryFamilyMember(secondary_family_member_id) ON UPDATE CASCADE
 );
 
 -- ClubMember
@@ -103,12 +113,13 @@ CREATE TABLE ClubMember (
     weight INT,
     status ENUM('Active', 'Inactive'),
     current_location_id INT,
+    join_date DATE,
     deactivation_date DATE,
     last_location_id INT,
     last_role VARCHAR(50),
-    FOREIGN KEY (sin) REFERENCES Person(sin),
-    FOREIGN KEY (current_location_id) REFERENCES Location(location_id) ON DELETE SET NULL,
-    FOREIGN KEY (last_location_id) REFERENCES Location(location_id) ON DELETE SET NULL
+    FOREIGN KEY (sin) REFERENCES Person(sin) ON UPDATE CASCADE,
+    FOREIGN KEY (current_location_id) REFERENCES Location(location_id) ON DELETE SET NULL ON UPDATE CASCADE,
+    FOREIGN KEY (last_location_id) REFERENCES Location(location_id) ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 -- ClubMemberFamily
@@ -137,9 +148,10 @@ CREATE TABLE Team (
     name VARCHAR(100),
     location_id INT,
     captain_id INT,
-    gender ENUM('Male', 'Female', 'Coed'),
+    gender ENUM('Male', 'Female'),
     FOREIGN KEY (location_id) REFERENCES Location(location_id) ON DELETE SET NULL,
-    FOREIGN KEY (captain_id) REFERENCES FamilyMember(family_member_id) ON DELETE CASCADE
+    FOREIGN KEY (captain_id) REFERENCES ClubMember(club_member_id) ON DELETE CASCADE
+
 );
 
 -- TeamMember
@@ -187,6 +199,95 @@ CREATE TABLE EmailLog (
     sender VARCHAR(100),
     email_date DATETIME,
     subject VARCHAR(255),
-    mail_body TEXT,
+    mail_body VARCHAR(500),
     email_type ENUM('formation', 'deactivation', 'notification')
 );
+
+
+CREATE VIEW PersonnelInformation AS
+SELECT
+    OperatesAt.*,
+    Person.*
+FROM Personnel
+NATURAL JOIN Person
+INNER JOIN OperatesAt ON Personnel.personnel_id = OperatesAt.personnel_id;
+
+CREATE VIEW FamilyMemberInformation AS
+SELECT *
+FROM FamilyMember NATURAL JOIN Person;
+
+CREATE VIEW ClubMemberInformation AS
+SELECT *
+FROM ClubMember NATURAL JOIN Person;
+
+CREATE VIEW ActiveClubMember AS
+SELECT *
+FROM ClubMember
+NATURAL JOIN ClubMemberFamily
+WHERE status = "Active";
+
+CREATE VIEW LosingTeamMember AS
+SELECT *
+FROM TeamMember
+INNER JOIN Session ON Session.team1_id = team_id OR Session.team2_id = team_id
+WHERE
+    (Session.team1_id = team_id AND score_team1 <= score_team2)
+    OR (Session.team2_id = team_id AND score_team2 <= score_team1);
+
+CREATE VIEW GameParticipatedTeamMember AS
+SELECT *
+FROM TeamMember
+INNER JOIN Session ON Session.team1_id = team_id OR Session.team2_id = team_id
+WHERE type = 'Game';
+
+CREATE VIEW TeamMemberInformationInSession AS
+SELECT
+    TeamMember.*,
+    Team.location_id AS team_location_id,
+    Session.*
+FROM TeamMember
+NATURAL JOIN Team
+INNER JOIN Session ON Session.team1_id = team_id OR Session.team2_id = team_id;
+
+CREATE VIEW TimeBetweenTeamMemberSession AS
+SELECT
+    ABS(TIMESTAMPDIFF(
+MINUTE,
+        TIMESTAMP(S1.date, S1.start_time),
+        TIMESTAMP(S2.date, S2.start_time)
+    )) AS minute_difference,
+    S1.session_id AS session1_id,
+    S2.session_id AS session2_id,
+    S1.team_id AS team_id,
+    S1.club_member_id AS club_member_id
+FROM
+    TeamMemberInformationInSession AS S1,
+    TeamMemberInformationInSession AS S2
+WHERE (
+(S1.session_id != S2.session_id OR S1.team_id != S2.team_id)
+    AND S1.club_member_id = S2.club_member_id);
+
+
+DELIMITER $$
+CREATE TRIGGER TeamMemberTimeConflictInsert
+AFTER Insert ON TeamMember
+FOR EACH ROW
+BEGIN
+    IF EXISTS (
+        SELECT *
+        FROM TimeBetweenTeamMemberSession
+        WHERE TimeBetweenTeamMemberSession.club_member_id = NEW.club_member_id
+        AND minute_difference < (3 * 60))
+    THEN
+        SIGNAL SQLSTATE '45000'
+          SET MESSAGE_TEXT = 'A Team Member cannot participate in sessions less than 3 hours apart.' ;
+    END IF;
+END;
+$$
+DELIMITER ;
+
+ALTER TABLE ClubMember
+ADD CONSTRAINT ClubMemberStatus CHECK (status IN ('Active', 'Inactive'));
+
+ALTER TABLE ClubMember
+DROP CONSTRAINT ClubMemberStatus;

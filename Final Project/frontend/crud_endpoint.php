@@ -419,8 +419,9 @@ switch ($action) {
 
 
     case 'edit':
+        header('Content-Type: application/json');
 
-        if($entity === 'location'){
+        if ($entity === 'location') {
             $location_id = isset($_POST['location_id']) ? $_POST['location_id'] : '';
             if ($location_id === '') {
                 echo json_encode(['success' => false, 'message' => 'Location ID is required.']);
@@ -480,7 +481,6 @@ switch ($action) {
                 ob_start();
                 displayLocationRowOnly($conn, $location_id);
                 $rowHTML = ob_get_clean();
-                ob_end_clean();
                 echo json_encode(['success' => true, 'row' => $rowHTML]);
             } else {
                 echo json_encode(['success' => false, 'message' => 'Update failed: ' . $stmt->error]);
@@ -489,11 +489,370 @@ switch ($action) {
             exit;
         }
 
-        if($entity === 'personnel'){}
+        if ($entity === 'personnel') {
+            $personnel_id = isset($_POST['personnel_id']) ? (int)$_POST['personnel_id'] : null;
+            $new_sin = isset($_POST['sin']) && $_POST['sin'] !== '' ? $_POST['sin'] : null;
 
-        if($entity === 'club_member'){}
+            if (!$personnel_id) {
+                echo json_encode(['success' => false, 'message' => 'Personnel ID is required.']);
+                break;
+            }
 
-        if($entity === 'team'){}
+            if ($new_sin === null) {
+                echo json_encode(['success' => false, 'message' => 'SIN is required for update.']);
+                break;
+            }
+
+            // Step 1: Get the current SIN
+            $getSinStmt = $conn->prepare("SELECT sin FROM Personnel WHERE personnel_id = ?");
+            $getSinStmt->bind_param("i", $personnel_id);
+            $getSinStmt->execute();
+            $getSinStmt->bind_result($current_sin);
+            $getSinStmt->fetch();
+            $getSinStmt->close();
+
+            if (!$current_sin) {
+                echo json_encode(['success' => false, 'message' => 'Could not find current SIN.']);
+                break;
+            }
+
+            // Step 2: Check if the new SIN already exists (and isn't the same as current)
+            if ($current_sin !== $new_sin) {
+                $checkDuplicate = $conn->prepare("SELECT 1 FROM Person WHERE sin = ?");
+                $checkDuplicate->bind_param("s", $new_sin);
+                $checkDuplicate->execute();
+                $checkDuplicate->store_result();
+
+                if ($checkDuplicate->num_rows > 0) {
+                    echo json_encode(['success' => false, 'message' => "SIN '$new_sin' is already in use."]);
+                    break;
+                }
+            }
+
+            // Step 3: Update Person table's SIN (cascades to Personnel via ON UPDATE CASCADE)
+            $updateStmt = $conn->prepare("UPDATE Person SET sin = ? WHERE sin = ?");
+            $updateStmt->bind_param("ss", $new_sin, $current_sin);
+
+            if ($updateStmt->execute()) {
+                ob_start();
+                displayPersonnelRowOnly($conn, $personnel_id);
+                $rowHTML = ob_get_clean();
+
+                echo json_encode(['success' => true, 'row' => $rowHTML]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Update failed: ' . $updateStmt->error]);
+            }
+
+            break;
+        }
+
+        if ($entity === 'family_member') {
+            $family_member_id = isset($_POST['family_member_id']) ? (int)$_POST['family_member_id'] : null;
+            $new_sin = isset($_POST['sin']) && $_POST['sin'] !== '' ? $_POST['sin'] : null;
+            $new_secondary_id = isset($_POST['secondary_family_member_id']) ? (int)$_POST['secondary_family_member_id'] : null;
+
+            if (!$family_member_id) {
+                echo json_encode(['success' => false, 'message' => 'Family Member ID is required.']);
+                break;
+            }
+
+            $fetch = $conn->prepare("SELECT sin FROM FamilyMember WHERE family_member_id = ?");
+            $fetch->bind_param("i", $family_member_id);
+            $fetch->execute();
+            $fetchResult = $fetch->get_result();
+
+            if ($fetchResult->num_rows === 0) {
+                echo json_encode(['success' => false, 'message' => 'Family Member not found.']);
+                break;
+            }
+
+            $row = $fetchResult->fetch_assoc();
+            $old_sin = $row['sin'];
+
+            if ($new_sin !== null && $new_sin !== $old_sin) {
+                $stmt = $conn->prepare("UPDATE Person SET sin = ? WHERE sin = ?");
+                $stmt->bind_param("ss", $new_sin, $old_sin);
+
+                if (!$stmt->execute()) {
+                    echo json_encode(['success' => false, 'message' => 'SIN update failed: ' . $stmt->error]);
+                    break;
+                }
+            }
+
+            if ($new_secondary_id !== null) {
+                $stmt = $conn->prepare("UPDATE FamilyMember SET secondary_family_member_id = ? WHERE family_member_id = ?");
+                $stmt->bind_param("ii", $new_secondary_id, $family_member_id);
+
+                if (!$stmt->execute()) {
+                    echo json_encode(['success' => false, 'message' => 'Secondary contact update failed: ' . $stmt->error]);
+                    break;
+                }
+            }
+
+            ob_start();
+            displayFamilyMemberRowOnly($conn, $family_member_id);
+            $rowHTML = ob_get_clean();
+            echo json_encode(['success' => true, 'row' => $rowHTML]);
+            break;
+        }
+
+
+        if ($entity === 'club_member') {
+            $club_member_id = isset($_POST['club_member_id']) ? (int)$_POST['club_member_id'] : null;
+            $new_sin = isset($_POST['sin']) && $_POST['sin'] !== '' ? $_POST['sin'] : null;
+
+            if (!$club_member_id) {
+                echo json_encode(['success' => false, 'message' => 'Club Member ID is required.']);
+                break;
+            }
+
+            $getSinStmt = $conn->prepare("SELECT sin FROM ClubMember WHERE club_member_id = ?");
+            $getSinStmt->bind_param("i", $club_member_id);
+            $getSinStmt->execute();
+            $getSinStmt->bind_result($old_sin);
+            $getSinStmt->fetch();
+            $getSinStmt->close();
+
+            if (!$old_sin) {
+                echo json_encode(['success' => false, 'message' => 'Club member not found.']);
+                break;
+            }
+
+
+            if ($new_sin && $new_sin !== $old_sin) {
+                $checkPerson = $conn->prepare("SELECT 1 FROM Person WHERE sin = ?");
+                $checkPerson->bind_param("s", $new_sin);
+                $checkPerson->execute();
+                $checkPerson->store_result();
+
+                if ($checkPerson->num_rows > 0) {
+                    echo json_encode(['success' => false, 'message' => "SIN '$new_sin' already exists in Person table."]);
+                    break;
+                }
+
+                // Update Person's SIN — will cascade to ClubMember (thanks to ON UPDATE CASCADE)
+                $updateSinStmt = $conn->prepare("UPDATE Person SET sin = ? WHERE sin = ?");
+                $updateSinStmt->bind_param("ss", $new_sin, $old_sin);
+
+                if (!$updateSinStmt->execute()) {
+                    echo json_encode(['success' => false, 'message' => "Failed to update SIN: " . $updateSinStmt->error]);
+                    break;
+                }
+            }
+
+            $fields = [
+                'height' => isset($_POST['height']) && $_POST['height'] !== '' ? (int)$_POST['height'] : null,
+                'weight' => isset($_POST['weight']) && $_POST['weight'] !== '' ? (int)$_POST['weight'] : null,
+                'status' => isset($_POST['status']) && $_POST['status'] !== '' ? $_POST['status'] : null,
+                'deactivation_date' => isset($_POST['deactivation_date']) && $_POST['deactivation_date'] !== '' ? $_POST['deactivation_date'] : null,
+                'last_role' => isset($_POST['last_role']) && $_POST['last_role'] !== '' ? $_POST['last_role'] : null,
+                'current_location_id' => isset($_POST['current_location_id']) && $_POST['current_location_id'] !== '' ? (int)$_POST['current_location_id'] : null,
+                'last_location_id' => isset($_POST['last_location_id']) && $_POST['last_location_id'] !== '' ? (int)$_POST['last_location_id'] : null,
+            ];
+
+            foreach (['current_location_id', 'last_location_id'] as $locKey) {
+                if ($fields[$locKey] !== null) {
+                    $checkLoc = $conn->prepare("SELECT 1 FROM Location WHERE location_id = ?");
+                    $checkLoc->bind_param("i", $fields[$locKey]);
+                    $checkLoc->execute();
+                    $checkLoc->store_result();
+                    if ($checkLoc->num_rows === 0) {
+                        echo json_encode(['success' => false, 'message' => ucfirst(str_replace('_', ' ', $locKey)) . " not found."]);
+                        break 2;
+                    }
+                }
+            }
+
+            $setClause = [];
+            $params = [];
+            $types = '';
+
+            foreach ($fields as $col => $val) {
+                if ($val !== null) {
+                    $setClause[] = "$col = ?";
+                    $params[] = $val;
+                    $types .= in_array($col, ['height', 'weight', 'current_location_id', 'last_location_id']) ? 'i' : 's';
+                }
+            }
+
+            if (empty($setClause)) {
+                echo json_encode(['success' => false, 'message' => 'No editable fields provided.']);
+                break;
+            }
+
+            $params[] = $club_member_id;
+            $types .= 'i';
+
+            $sql = "UPDATE ClubMember SET " . implode(", ", $setClause) . " WHERE club_member_id = ?";
+            $stmt = $conn->prepare($sql);
+            $bindParams = array_merge([$types], $params);
+            $refs = [];
+            foreach ($bindParams as $k => $v) $refs[$k] = &$bindParams[$k];
+            call_user_func_array([$stmt, 'bind_param'], $refs);
+
+            if ($stmt->execute()) {
+                ob_start();
+                displayClubMemberRowOnly($conn, $club_member_id);
+                $rowHTML = ob_get_clean();
+                echo json_encode(['success' => true, 'row' => $rowHTML]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Update failed: ' . $stmt->error]);
+            }
+
+            break;
+        }
+
+
+        if ($entity === 'team') {
+            $team_id = isset($_POST['team_id']) ? (int)$_POST['team_id'] : null;
+
+            if (!$team_id) {
+                echo json_encode(['success' => false, 'message' => 'Team ID is required.']);
+                break;
+            }
+
+            $fields = [
+                'name'        => isset($_POST['name']) && $_POST['name'] !== '' ? $_POST['name'] : null,
+                'gender'      => isset($_POST['gender']) && $_POST['gender'] !== '' ? $_POST['gender'] : null,
+                'location_id' => isset($_POST['location_id']) && $_POST['location_id'] !== '' ? (int)$_POST['location_id'] : null,
+                'captain_id'  => isset($_POST['captain_id']) && $_POST['captain_id'] !== '' ? (int)$_POST['captain_id'] : null
+            ];
+
+            foreach (['location_id', 'captain_id'] as $fk) {
+                if ($fields[$fk] !== null) {
+                    $refTable = $fk === 'location_id' ? 'Location' : 'ClubMember';
+                    $refColumn = $fk === 'location_id' ? 'location_id' : 'club_member_id';
+
+                    $check = $conn->prepare("SELECT 1 FROM $refTable WHERE $refColumn = ?");
+                    if (!$check) {
+                        echo json_encode(['success' => false, 'message' => "SQL prepare failed: " . $conn->error]);
+                        break 2;
+                    }
+                    $check->bind_param("i", $fields[$fk]);
+                    $check->execute();
+                    $check->store_result();
+                    if ($check->num_rows === 0) {
+                        echo json_encode(['success' => false, 'message' => ucfirst($fk) . " '{$fields[$fk]}' does not exist."]);
+                        break 2;
+                    }
+                }
+            }
+
+            $setClause = [];
+            $params = [];
+            $types = '';
+
+            foreach ($fields as $col => $val) {
+                if ($val !== null) {
+                    $setClause[] = "$col = ?";
+                    $params[] = $val;
+                    $types .= in_array($col, ['location_id', 'captain_id']) ? 'i' : 's';
+                }
+            }
+
+            if (empty($setClause)) {
+                echo json_encode(['success' => false, 'message' => 'No editable fields provided.']);
+                break;
+            }
+
+            $params[] = $team_id;
+            $types .= 'i';
+
+            $sql = "UPDATE Team SET " . implode(", ", $setClause) . " WHERE team_id = ?";
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                echo json_encode(['success' => false, 'message' => 'SQL prepare failed: ' . $conn->error]);
+                break;
+            }
+
+            $bindParams = array_merge([$types], $params);
+            $refs = [];
+            foreach ($bindParams as $k => $v) {
+                $refs[$k] = &$bindParams[$k];
+            }
+
+            call_user_func_array([$stmt, 'bind_param'], $refs);
+
+            if ($stmt->execute()) {
+                ob_start();
+                displayTeamRowOnly($conn, $team_id);
+                $rowHTML = ob_get_clean();
+                echo json_encode(['success' => true, 'row' => $rowHTML]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Update failed: ' . $stmt->error]);
+            }
+
+            break;
+        }
+
+        if ($entity === 'team_member') {
+            $team_id = isset($_POST['team_id']) ? (int)$_POST['team_id'] : null;
+            $club_member_id = isset($_POST['club_member_id']) ? (int)$_POST['club_member_id'] : null;
+            $role = isset($_POST['role']) && $_POST['role'] !== '' ? $_POST['role'] : 'Player';
+
+            if ($team_id === null || $club_member_id === null) {
+                echo json_encode(['success' => false, 'message' => 'Team ID and Club Member ID are required.']);
+                break;
+            }
+
+            $entityToTableMap = [
+                'team' => 'Team',
+                'club_member' => 'ClubMember'
+            ];
+
+            foreach (['team' => $team_id, 'club_member' => $club_member_id] as $entity => $id) {
+                $col = $entity === 'team' ? 'team_id' : 'club_member_id';
+                $table = $entityToTableMap[$entity];
+
+                $check = $conn->prepare("SELECT 1 FROM $table WHERE $col = ?");
+                if (!$check) {
+                    echo json_encode(['success' => false, 'message' => 'SQL error during entity existence check: ' . $conn->error]);
+                    break 2;
+                }
+                $check->bind_param("i", $id);
+                $check->execute();
+                $check->store_result();
+
+                if ($check->num_rows === 0) {
+                    echo json_encode(['success' => false, 'message' => ucfirst($col) . " $id does not exist."]);
+                    break 2;
+                }
+            }
+
+            // Check for scheduling conflict (sessions involving same date and < 3h apart)
+            // $conflictCheck = $conn->prepare("
+            //     SELECT 1
+            //     FROM Session s1
+            //     JOIN TeamMember tm ON tm.team_id IN (s1.team1_id, s1.team2_id)
+            //     JOIN Session s2 ON s2.team1_id = ? OR s2.team2_id = ?
+            //     WHERE tm.club_member_id = ?
+            //     AND s1.date = s2.date
+            //     AND ABS(TIMESTAMPDIFF(MINUTE, s1.start_time, s2.start_time)) < 180
+            // ");
+            // $conflictCheck->bind_param("iii", $team_id, $team_id, $club_member_id);
+            // $conflictCheck->execute();
+            // $conflictCheck->store_result();
+
+            // if ($conflictCheck->num_rows > 0) {
+            //     echo json_encode(['success' => false, 'message' => 'Scheduling conflict: This player is already assigned to a session within 3 hours of this one.']);
+            //     break;
+            // }
+
+            $stmt = $conn->prepare("REPLACE INTO TeamMember (team_id, club_member_id, role) VALUES (?, ?, ?)");
+            $stmt->bind_param("iis", $team_id, $club_member_id, $role);
+
+            if ($stmt->execute()) {
+                ob_start();
+                displayTeamMemberRowOnly($conn, $team_id, $club_member_id);
+                $rowHTML = ob_get_clean();
+                echo json_encode(['success' => true, 'row' => $rowHTML]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Insert/update failed: ' . htmlspecialchars($stmt->error)]);
+            }
+
+            break;
+        }
+
 
         break;
 
@@ -729,12 +1088,16 @@ function locationExists($conn, $location_id) {
     return $count > 0;
 }
 
-function debugPostData() {
-    echo "<pre>";
-    echo "Received POST data:\n";
-    print_r($_POST);
-    echo "</pre>";
+function debugPostDataAndExit() {
+    header('Content-Type: application/json');
+    echo json_encode([
+        'success' => false,
+        'message' => 'Debugging POST data',
+        'debug' => $_POST
+    ]);
+    exit;
 }
+
 
 
 function displayLocationRowOnly($conn, $location_id) {
@@ -746,17 +1109,24 @@ function displayLocationRowOnly($conn, $location_id) {
     if ($result->num_rows === 0) return;
 
     while ($row = $result->fetch_assoc()) {
+
         echo "<tr>";
         echo "<td>
-                <button class='action-btn edit-btn' onclick=\"editRow(this, 'location')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
-                <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'location')\"><i class=\"bi bi-trash\">DEL</i></button>
+                <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'location', true)\">
+                    <i class='bi bi-pencil-square'>EDIT</i>
+                </button>
+                <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'location')\">
+                    <i class='bi bi-trash'>DEL</i>
+                </button>
             </td>";
+
         foreach ($row as $val) {
             echo "<td>" . htmlspecialchars($val) . "</td>";
         }
         echo "</tr>";
     }
 }
+
 
 
 function displayPersonnelRowOnly($conn, $personnel_id) {
@@ -770,13 +1140,12 @@ function displayPersonnelRowOnly($conn, $personnel_id) {
 
     echo "<tr>";
     echo "<td>
-        <button class='action-btn edit-btn' onclick=\"editRow(this, 'personnel')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+        <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'personnel', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
         <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'personnel')\"><i class=\"bi bi-trash\">DEL</i></button>
     </td>";
     foreach ($row as $val) {
         echo "<td>" . htmlspecialchars($val) . "</td>";
     }
-
     echo "</tr>";
 }
 
@@ -791,13 +1160,12 @@ function displayFamilyMemberRowOnly($conn, $family_member_id) {
 
     echo "<tr>";
     echo "<td>
-        <button class='action-btn edit-btn' onclick=\"editRow(this, 'family_member')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+        <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'family_member', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
         <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'family_member')\"><i class=\"bi bi-trash\">DEL</i></button>
     </td>";
     foreach ($row as $val) {
         echo "<td>" . htmlspecialchars($val) . "</td>";
     }
-
     echo "</tr>";
 }
 
@@ -812,13 +1180,12 @@ function displayClubMemberRowOnly($conn, $club_member_id) {
 
     echo "<tr>";
     echo "<td>
-        <button class='action-btn edit-btn' onclick=\"editRow(this, 'club_member')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+        <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'club_member', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
         <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'club_member')\"><i class=\"bi bi-trash\">DEL</i></button>
     </td>";
     foreach ($row as $val) {
         echo "<td>" . htmlspecialchars($val) . "</td>";
     }
-
     echo "</tr>";
 }
 
@@ -833,13 +1200,12 @@ function displayTeamRowOnly($conn, $team_id) {
 
     echo "<tr>";
     echo "<td>
-        <button class='action-btn edit-btn' onclick=\"editRow(this, 'team')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+        <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'team', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
         <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'team')\"><i class=\"bi bi-trash\">DEL</i></button>
     </td>";
     foreach ($row as $val) {
         echo "<td>" . htmlspecialchars($val) . "</td>";
     }
-
     echo "</tr>";
 }
 
@@ -854,15 +1220,13 @@ function displayTeamMemberRowOnly($conn, $team_id, $club_member_id) {
 
     echo "<tr>";
     echo "<td>
-        <button class='action-btn edit-btn' onclick=\"editRow(this, 'team_member')\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
+        <button class='action-btn edit-btn' onclick=\"createOrEditRow(this, 'team_member', true)\"><i class=\"bi bi-pencil-square\">EDIT</i></button>
         <button class='action-btn delete-btn' onclick=\"deleteRow(this, 'team_member')\"><i class=\"bi bi-trash\">DEL</i></button>
     </td>";
     foreach ($row as $val) {
         echo "<td>" . htmlspecialchars($val) . "</td>";
     }
-
     echo "</tr>";
 }
-
 
 ?>

@@ -1,4 +1,37 @@
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('query').addEventListener('change', function () {
+        const query = this.value;
+        const dateContainer = document.getElementById('date-range-container');
+
+        if (query === '(xi) session_summary_by_location' || query === '(ix) weekly_team_formations_for_location') {
+            dateContainer.style.display = 'block';
+        } else {
+            dateContainer.style.display = 'none';
+        }
+    });
+
+    document.getElementById('search-btn').addEventListener('click', function (e) {
+        const query = document.getElementById('query').value;
+
+        if (query === '(xi) session_summary_by_location') {
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const searchInput = document.getElementById('search-input');
+
+            // Format as: "YYYY-MM-DD,YYYY-MM-DD"
+            searchInput.value = `${startDate},${endDate}`;
+        }
+
+        if (query === '(ix) weekly_team_formations_for_location'){
+            const startDate = document.getElementById('start-date').value;
+            const endDate = document.getElementById('end-date').value;
+            const searchInput = document.getElementById('search-input');
+
+            // Format as: "YYYY-MM-DD,YYYY-MM-DD"
+            searchInput.value = `${startDate},${endDate}`;
+        }
+
+    });
 
 });
 
@@ -12,134 +45,10 @@ document.addEventListener("htmx:afterSwap", function(event) {
     }
 });
 
-function editRow(button, tableName){
-    console.log(`EDIT ${tableName}\n`);
-    //gather from document, the current row by which this edit button is associated
-    //depending on the table, we only allow certain fields to be editable (e.g. if location, then name, address, etc)
-    //note: cannot edit PK or FK
-
-    if (tableName === 'location'){
-        const editable_columns = [
-            'name',
-            'type',
-            'address',
-            'phone_number', //TODO: maybe we have a pre-existing dropdown list of available postal codes
-            'web_address',
-            'max_capacity',
-        ];
-        const row = button.closest('tr');
-        const table = row.closest('table');
-        const headers = table.querySelectorAll('thead th');
-        const cells = row.querySelectorAll('td');
-
-        cells.forEach((cell, index) => {
-            const header = headers[index];
-
-            editable_columns.forEach(editable_column => {
-                if (header.textContent.trim() === editable_column) {
-
-                    if (!cell.querySelector('input')){
-                        const currentContent = cell.textContent.trim();
-
-                        const input = document.createElement('input');
-                        input.type = 'text';
-                        input.value = currentContent;
-
-                        input.classList.add('inline-edit');
-
-                        cell.innerHTML = '';
-                        cell.appendChild(input);
-
-                        //TODO: add the same even listener to each input
-                        //to listen for enter key which will trigger an update JS function to crud_endpoint.php
-                        //this JS funcion will take in the current row, and remake it with the new info post-commit to db
-                        //and reinsert the new row here
-                        input.addEventListener('keydown', function(event){
-                            if (event.key === 'Enter'){
-                                submitRowEdit(row, 'location');
-                            }
-                        });
-                    }
-
-                }
-            });
-
-        });
-
-    }
-
-    if(tableName === 'personnel'){
-        //TODO: handle personnel actions
-    }
-
-    if(tableName === 'family_member'){
-        //TODO: handle fam actions
-    }
-
-    if(tableName === 'club_member'){
-        //TODO: handle club mem actions
-    }
-
-    if(tableName === 'team'){
-        //TODO: handle team actions
-    }
-
-
-}
-
-
-function submitRowEdit(row, entityName) {
-    const cells = row.querySelectorAll('td');
-
-    const formData = new FormData();
-    formData.append('crud_action', 'edit');
-    formData.append('target_entity', entityName);
-
-    const headers = row.closest('table').querySelectorAll('thead th');
-
-    cells.forEach((cell, index) => {
-        const headerText = headers[index].textContent.trim().toLowerCase().replace(/\s+/g, '_');
-        const input = cell.querySelector('input');
-        const select = cell.querySelector('select');
-
-        let value = '';
-        if (select) {
-            value = select.value;
-        } else if (input) {
-            value = input.value;
-        } else {
-            value = cell.textContent.trim();
-        }
-
-        formData.append(headerText, value);
-    });
-
-    const idField = headers[0].textContent.trim().toLowerCase().replace(/\s+/g, '_');
-    formData.append(idField, cells[0].textContent.trim());
-
-    fetch('/frontend/crud_endpoint.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            row.outerHTML = data.row;
-        } else {
-            alert(data.message);
-        }
-    })
-    .catch(err => {
-        console.error('Update error:', err);
-        alert('Something went wrong while updating.');
-    });
-
-}
-
-
 
 function deleteRow(button, entity) {
     const row = button.closest('tr');
+    const formData = new FormData();
     const pkMap = {
         location: 'location_id',
         personnel: 'personnel_id',
@@ -161,8 +70,12 @@ function deleteRow(button, entity) {
 
     headers.forEach((header, index) => {
         const key = header.textContent.trim().toLowerCase().replace(/\s+/g, '_');
+        if (key === "club_member_id" && pkName === "team_id"){
+            formData.append("club_member_id", cells[index].textContent);
+        }
         if (key === pkName && cells[index]) {
             pkValue = cells[index].textContent.trim();
+
         }
     });
 
@@ -174,7 +87,7 @@ function deleteRow(button, entity) {
     const confirmed = confirm(`Are you sure you want to delete ${entity} with ID ${pkValue}?`);
     if (!confirmed) return;
 
-    const formData = new FormData();
+
     formData.append('crud_action', 'delete');
     formData.append('target_entity', entity);
     formData.append(pkName, pkValue);
@@ -197,120 +110,164 @@ function deleteRow(button, entity) {
     });
 }
 
-function createRow(button, flag){
+function createOrEditRow(button = null, flag, isEdit = false) {
     const table = button.closest('table');
     const tbody = table.querySelector('tbody');
     const headers = table.querySelectorAll('thead th');
+    const targetRow = button.closest('tr');
+    const row = isEdit ? targetRow : document.createElement('tr');
 
-    const newRow = document.createElement('tr');
-    newRow.classList.add('new-row');
+    //Check if it's been pressed already
+    const all_btns = row.querySelectorAll('button');
+    let already_pressed = false;
+
+    all_btns.forEach(btn => {
+        if (btn.textContent.includes("Submit")) {
+            already_pressed = true;
+        }
+    });
+
+    if (already_pressed) {
+        return;
+    }
+
+    if (!isEdit) row.classList.add('new-row');
 
     headers.forEach((header, index) => {
         const key = header.textContent.trim().toLowerCase().replace(/\s+/g, '_');
-        const cell = document.createElement('td');
+        const cell = isEdit ? row.children[index] : document.createElement('td');
+        const value = isEdit ? cell.textContent.trim() : '';
 
-        if (index === 0){
-            cell.textContent = `New ${flag.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}`;
-        }
-        else if (["team", "team_member"].includes(flag) && key === "team_id") {
-            const available_teams = document.createElement('select');
-            populateSelectFromBackend(available_teams, "team");
-            cell.appendChild(available_teams);
-        }
+        if (index === 0) {
+            const all_btns = cell.querySelectorAll('button');
+            let exists = false;
 
-        else if (["team", "team_member"].includes(flag) && key === "club_member_id") {
-            const available_members = document.createElement('select');
-            populateSelectFromBackend(available_members, "club_member");
-            cell.appendChild(available_members);
-        }
-
-        else if (flag === "team" && key === "location_id") {
-            const available_locations = document.createElement('select');
-            populateSelectFromBackend(available_locations, "location");
-            cell.appendChild(available_locations);
-        }
-
-        else if (flag === "team" && key === "captain_id") {
-            const available_captains = document.createElement('select');
-            populateSelectFromBackend(available_captains, "club_member");
-            cell.appendChild(available_captains);
-        }
-        else if (flag === "team_member" && key === "role") {
-            const roles = document.createElement('select');
-            ["Captain", "Member", "Vice Captain"].forEach(role => {
-                const option = document.createElement('option');
-                option.value = role;
-                option.textContent = role;
-                roles.appendChild(option);
-            });
-            cell.appendChild(roles);
-        }
-
-        else if(["team"].includes(flag) && ["gender"].includes(key)){
-            const available_genders = document.createElement('select');
-
-            ["Male", "Female", "Coed"].forEach(gender => {
-                const option = document.createElement('option');
-                option.value = gender;
-                option.textContent = gender;
-                available_genders.appendChild(option);
-            });
-
-            cell.appendChild(available_genders);
-        }
-        else {
-
-            if (["location_id", "personnel_id", "family_member_id", "club_member_id"].includes(key)){
-                cell.textContent = '[Auto]';
-            }
-            else{
-
-                const input = document.createElement('input');
-                input.type = 'text';
-                input.classList.add('inline-edit');
-
-                const requiredFields = {
-                    location: ['name', 'type', 'address'],
-                    personnel: ['sin'],
-                    family_member: ['sin'],
-                    club_member: ['sin', 'status'],
-                    team: ['name', 'gender'],
-                    team_member: ['team_id', 'club_member_id', 'role']
-                };
-
-                if (requiredFields[flag]?.includes(key)) {
-                    input.placeholder = `${header.textContent.trim()} *`;
-                    input.required = true;
-                } else {
-                    input.placeholder = header.textContent.trim();
+            all_btns.forEach(btn => {
+                if (btn.textContent.includes("Submit")) {
+                    exists = true;
                 }
+            });
 
-                input.addEventListener('keydown', function (event) {
-                    if (event.key === 'Enter') {
-                        submitNewRow(newRow, flag);
-                    }
-                });
-
-                cell.appendChild(input);
+            if (exists) {
+                return;
             }
 
+            const submitBtn = document.createElement('button');
+            submitBtn.innerHTML = `<span><i class="bi bi-check-circle-fill"></i> Submit</span>`;
+            submitBtn.addEventListener('click', function () {
+                submitNewRow(row, flag, isEdit);
+            });
+            cell.append(submitBtn);
+        } else if (flag === "location" && key === "type") {
+            const select = createSelect(['Head', 'Branch'], value);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "location" && key === "general_manager_id") {
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'personnel', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "club_member" && ["current_location_id", "last_location_id"].includes(key)) {
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'location', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "club_member" && key === "status") {
+            const select = createSelect(['Active', 'Inactive'], value);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "club_member" && key === "deactivation_date") {
+            const input = document.createElement('input');
+            input.type = 'date';
+            input.classList.add('inline-edit');
+            if (isEdit) input.value = value;
+            replaceCellContent(cell, input, isEdit);
+        } else if (flag === "team" && key === "location_id") {
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'location', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "team" && key === "captain_id") {
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'club_member', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        } else if (flag === "team" && key === "gender") {
+            const select = createSelect(['Male', 'Female', 'Coed'], value);
+            replaceCellContent(cell, select, isEdit);
 
         }
+        else if(flag === "team" && key === "team_id"){
 
-        newRow.appendChild(cell);
+        }
+        else if(flag === "team_member" && key === "team_id"){
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'team', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        }
+        else if (["team", "team_member"].includes(flag) && key === "club_member_id") {
+            const select = document.createElement('select');
+            populateSelectFromBackend(select, 'club_member', isEdit ? value : null);
+            replaceCellContent(cell, select, isEdit);
+        } else if (["team_member", "club_member"].includes(flag) && ["role", "last_role"].includes(key)) {
+            const select = createSelect(["Setter", "Outside Hitter", "Middle Blocker", "Libero", "Defensive Specialist", "Opposite"], value);
+            replaceCellContent(cell, select, isEdit);
+        } else if (["location_id", "personnel_id", "family_member_id", "club_member_id"].includes(key)) {
+            if (!isEdit) cell.textContent = '[Auto]';
+        } else {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.classList.add('inline-edit');
+            input.placeholder = header.textContent.trim();
+            if (isEdit) input.value = value;
+            replaceCellContent(cell, input, isEdit);
+        }
+
+        if (!isEdit) row.appendChild(cell);
     });
 
-    tbody.appendChild(newRow);
-    newRow.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (!isEdit) {
+        tbody.appendChild(row);
+        row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+}
+
+function replaceCellContent(cell, element, isEdit) {
+    cell.innerHTML = '';
+    cell.appendChild(element);
+
+    element.classList.add('inline-edit');
+    setTimeout(() => element.focus(), 0);
+
+    element.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+            const row = cell.closest('tr');
+            const entity = document.querySelector('.create-btn')?.dataset.entity;
+            submitNewRow(row, entity, isEdit);
+        }
+    });
 }
 
 
-function submitNewRow(row, entity) {
+function createSelect(optionsArray, selectedValue = '') {
+    const select = document.createElement('select');
+    optionsArray.forEach(val => {
+        const opt = document.createElement('option');
+        opt.value = val;
+        opt.textContent = val;
+        if (val === selectedValue) opt.selected = true;
+        select.appendChild(opt);
+    });
+    return select;
+}
+
+
+function submitNewRow(row, entity, isEdit = false) {
     const headers = row.closest('table').querySelectorAll('thead th');
     const cells = row.querySelectorAll('td');
     const formData = new FormData();
 
-    formData.append('crud_action', 'create');
+    if (!isEdit){
+        formData.append('crud_action', 'create');
+    }
+    else{
+        formData.append('crud_action', 'edit');
+    }
+
     formData.append('target_entity', entity);
 
     let valid = true;
@@ -334,17 +291,6 @@ function submitNewRow(row, entity) {
         value = value.trim();
 
         formData.append(key, value);
-
-        //TODO: Check validity of inputs contingent upon table category
-        // if (entity === 'team_member'){
-        //     console.log();
-        // }
-        //   // if (entity === 'location' && ['name', 'type', 'address'].includes(key) && value === '') {
-        //     input.classList.add('input-error');
-        //     valid = false;
-        // } else {
-        //     input.classList.remove('input-error');
-        // }
     });
 
     if (!valid) {
@@ -374,7 +320,7 @@ function submitNewRow(row, entity) {
 }
 
 
-async function populateSelectFromBackend(selectElement, entity) {
+async function populateSelectFromBackend(selectElement, entity, selectedValue = null) {
     try {
         const res = await fetch(`/frontend/crud_endpoint.php?target_entity=${entity}&crud_action=populate`);
         const data = await res.json();
@@ -387,6 +333,11 @@ async function populateSelectFromBackend(selectElement, entity) {
             option.textContent = item['label'];
             selectElement.appendChild(option);
         });
+
+        if (selectedValue !== null) {
+            selectElement.value = selectedValue;
+        }
+
     } catch (err) {
         console.error(`Failed to fetch ${entity} options:`, err);
         const option = document.createElement('option');

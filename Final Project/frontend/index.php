@@ -6,7 +6,7 @@
     <title>Search MYVC Database</title>
     <link rel="stylesheet" href="https://lqc353.encs.concordia.ca/frontend/global_style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="/frontend/htmx.min.js"></script>
     <script src="https://lqc353.encs.concordia.ca/frontend/index.js"></script>
 </head>
 
@@ -46,6 +46,13 @@
                     <option value="(xxi) show_email_logs">(xxi) Show Email Logs</option>
                 </select>
                 <input type="text" id="search-input" name="search" placeholder="Enter value here" value="">
+                <div id="date-range-container" style="display: none; margin-top: 10px;">
+                    <label for="start-date">Start Date:</label>
+                    <input type="date" id="start-date" name="start-date">
+                    <label for="end-date" style="margin-left: 2px;">End Date:</label>
+                    <input type="date" id="end-date" name="end-date">
+                </div>
+
                 <button id='search-btn'><i class='bi-search'>Search</i></button>
             </form>
             <div id="outer-results-container">

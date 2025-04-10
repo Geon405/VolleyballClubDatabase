@@ -72,24 +72,36 @@ select, input {
 }
 
 button {
-    padding: 10px 15px;
+    padding: 5px;
     background: #007bff;
     color: white;
     border: none;
     border-radius: 5px;
     cursor: pointer;
     font-size: 16px;
-    transition: all 0.3s ease-in-out;
+    width: 90px;
+    font-weight: 600;
+    margin-top: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 button:hover {
     background: #0056b3;
 }
 
+#search-btn{
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    padding: 10px;
+    margin-top: unset;
+}
+
+
 #results {
     display: none;
     width: 93%;
-    background: rgb(0 144 231 / 20%);
+    background: rgba(255, 255, 255, 0.2);
     border-radius: 10px;
     padding: 20px;
     box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.2);
