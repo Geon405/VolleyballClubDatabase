@@ -43,7 +43,7 @@ The project supports the following queries:
 ## COMP353 Team Members
 
 - **Geon Kim (40264507)** (Backend, Frontend)
-- **David Martinez** (Backend, Frontend)
+- **David Martinez (29556869)** (Backend, Frontend)
 - **Shayan Goldstein (40229167)** (Backend, Frontend)
 - **Denmar Ermitano (40286029)** (Backend, Frontend)
 
